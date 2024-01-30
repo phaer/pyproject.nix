@@ -31,6 +31,29 @@ in
       };
     };
 
+  /*
+    Checks whether pkgs.python contains all extras declared in the parsed project.
+  */
+  checks.extras = { python }: dependency:
+    let
+      pname = pypa.normalizePackageName dependency.name;
+      pkg = python.pkgs.${pname};
+      optionalDeps = pkg.passthru.optional-dependencies or { };
+      known = lib.filter (extra: optionalDeps ? extra) dependency.extras;
+      missing = lib.filter (extra: (lib.subtractLists pkg.propagatedBuildInputs optionalDeps.${extra}) != [ ]) known;
+      unknown = lib.subtractLists known dependency.extras;
+    in
+    if missing == [ ] || unknown == [ ]
+    then dependency
+    else dependency // {
+      validationFailures = {
+        extra = {
+          name = pname;
+          inherit missing;
+          inherit unknown;
+        };
+      };
+    };
 
   validateChecks =
     {
@@ -50,8 +73,8 @@ in
         inherit extras;
       };
       checks' = map (fn: fn { inherit python; }) checks;
-      dependencies = filteredDeps.dependencies ++ flatten (attrValues filteredDeps.extras) ++ filteredDeps.build-systems;
-      checked = map (dep: lib.pipe dep checks') dependencies;
+      flatDeps = filteredDeps.dependencies ++ flatten (attrValues filteredDeps.extras) ++ filteredDeps.build-systems;
+      checked = map (dep: lib.pipe dep checks') flatDeps;
     in
     filter (d: d ? validationFailures) checked;
 
@@ -93,7 +116,7 @@ in
         environ = pep508.mkEnviron python;
         inherit extras;
       };
-      dependencies = filteredDeps.dependencies ++ flatten (attrValues filteredDeps.extras) ++ filteredDeps.build-systems;
+      flatDeps = filteredDeps.dependencies ++ flatten (attrValues filteredDeps.extras) ++ filteredDeps.build-systems;
       validator = self.checks.version { inherit python; };
     in
     foldl'

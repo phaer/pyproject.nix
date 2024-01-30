@@ -296,7 +296,7 @@ lib.fix (self: {
       expected = {
         renderers = [ "buildPythonPackage" "withPackages" ];
         requires-python = null;
-        validators = [ "validateVersionConstraints" ];
+        validators = [ "checks" "validateChecks" "validateVersionConstraints" ];
         dependencies = {
           build-systems = [ ];
           dependencies = [

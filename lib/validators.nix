@@ -5,12 +5,56 @@
 , pypa
 , ...
 }:
+lib.fix (self:
 let
   inherit (builtins) attrValues foldl' filter;
   inherit (lib) flatten;
 
 in
 {
+  checks.version = { python }: dependency:
+    let
+      pname = pypa.normalizePackageName dependency.name;
+      pversion = python.pkgs.${pname}.version;
+      version = pep440.parseVersion python.pkgs.${pname}.version;
+      incompatible = filter (cond: ! pep440.comparators.${cond.op} version cond.version) dependency.conditions;
+    in
+    if incompatible == [ ]
+    then dependency
+    else dependency // {
+      validationFailures = {
+        version = {
+          name = pname;
+          version = pversion;
+          conditions = incompatible;
+        };
+      };
+    };
+
+
+  validateChecks =
+    {
+      # Project metadata as returned by `lib.project.loadPyproject`
+      project
+    , # Python derivation
+      python
+    , # Python extras (optionals) to enable
+      extras ? [ ]
+    , # checks
+      checks ? (lib.attrValues self.checks)
+    }:
+    let
+      filteredDeps = pep621.filterDependencies {
+        inherit (project) dependencies;
+        environ = pep508.mkEnviron python;
+        inherit extras;
+      };
+      checks' = map (fn: fn { inherit python; }) checks;
+      dependencies = filteredDeps.dependencies ++ flatten (attrValues filteredDeps.extras) ++ filteredDeps.build-systems;
+      checked = map (dep: lib.pipe dep checks') dependencies;
+    in
+    filter (d: d ? validationFailures) checked;
+
   /*
     Validates the Python package set held by Python (`python.pkgs`) against the parsed project.
 
@@ -49,23 +93,19 @@ in
         environ = pep508.mkEnviron python;
         inherit extras;
       };
-      flatDeps = filteredDeps.dependencies ++ flatten (attrValues filteredDeps.extras) ++ filteredDeps.build-systems;
-
+      dependencies = filteredDeps.dependencies ++ flatten (attrValues filteredDeps.extras) ++ filteredDeps.build-systems;
+      validator = self.checks.version { inherit python; };
     in
     foldl'
       (acc: dep:
       let
-        pname = pypa.normalizePackageName dep.name;
-        pversion = python.pkgs.${pname}.version;
-        version = pep440.parseVersion python.pkgs.${pname}.version;
-        incompatible = filter (cond: ! pep440.comparators.${cond.op} version cond.version) dep.conditions;
+        failure = (validator dep).validationFailures.version or { };
       in
-      if incompatible == [ ] then acc else acc // {
-        ${pname} = {
-          version = pversion;
-          conditions = incompatible;
+      if failure == { } then acc else acc // {
+        ${failure.name} = {
+          inherit (failure) version conditions;
         };
       })
       { }
       flatDeps;
-}
+})
